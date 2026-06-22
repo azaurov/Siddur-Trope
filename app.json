@@ -14,7 +14,8 @@
     "newArchEnabled": true,
     "platforms": [
       "android",
-      "ios"
+      "ios",
+      "web"
     ],
     "android": {
       "package": "com.temple.siddur.trope",
@@ -33,6 +34,18 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Record your voice to practice trope chanting and Hebrew prayer recitation."
       }
+    },
+    "web": {
+      "name": "Siddur & Trope",
+      "shortName": "SiddurTrope",
+      "lang": "en",
+      "themeColor": "#1E3A8A",
+      "backgroundColor": "#1E3A8A",
+      "display": "standalone",
+      "orientation": "portrait",
+      "favicon": "./assets/icon.png",
+      "bundle": true,
+      "output": "single"
     },
     "extra": {
       "eas": {

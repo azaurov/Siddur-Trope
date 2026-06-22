@@ -86,6 +86,12 @@ All workbook content lives in `assets/data/`:
 
 Edit these files to add/update content; `App.js` imports them at startup.
 
+### Deployment
+
+- **PWA:** `npm run build:web` → `rsync dist/ azaurov@10.0.0.141:/var/www/trope.sogdiana-gematria.net/` → live at `https://trope.sogdiana-gematria.net`. Nginx config at `deploy/trope.sogdiana-gematria.net.nginx`.
+- **iOS CI screenshots:** `.github/workflows/ios-screenshot.yml` — runs `expo prebuild`, builds Release for simulator with Xcode (macos-15), uses `idb` to tap through the profile-picker to the home screen, uploads PNGs as artifacts. Triggered on push to `main` and `workflow_dispatch`.
+- **iOS distribution:** no paid Apple Developer account — use the PWA or sideload via AltStore (7-day cert expiry, 3-device limit).
+
 ## Conventions
 
 - All styles in one `StyleSheet.create({})` block at the bottom of `App.js`.

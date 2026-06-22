@@ -1,0 +1,160 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SiddurTrope .gitignore
+# Expo SDK 56 + React Native 0.85 + Android Gradle + Node
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── OS / editor noise ──────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# JetBrains / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ─── Node / npm ─────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs (if not already in dist build)
+dist/
+build/
+*.tgz
+.npm/
+.yarn/
+
+# ─── Expo ────────────────────────────────────────────────────────────────────
+.expo/
+.expo-shared/
+.expo-shared/*
+
+# Native folders from `expo prebuild` (kept ignored — users should prebuild locally)
+.expo/
+
+# ─── React Native / Metro ────────────────────────────────────────────────────
+.metro-health-check*
+.expo-types/
+*.jsbundle
+*.bundle
+
+# ─── Secrets (NEVER commit these) ────────────────────────────────────────────
+# API keys, tokens, passwords, OAuth secrets, encryption keys.
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.test
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+.secrets/
+auth.json
+firebase-adminsdk*.json
+google-services.json
+GoogleService-Info.plist
+
+# EAS / Expo secrets
+eas.json
+*.eas.json
+
+# ─── Android / Gradle ────────────────────────────────────────────────────────
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release/
+android/app/.cxx/
+android/.idea/
+android/local.properties
+android/captures/
+android/.kotlin/
+android/**/.cxx/
+
+# Keystores — commit debug.keystore for reproducible debug builds,
+# NEVER commit release/production keystores.
+*.keystore
+*.jks
+!android/app/debug.keystore
+
+# NDK / native build artifacts
+*.so.dwarfdump
+obj/
+
+# ─── iOS (kept in case you port later) ───────────────────────────────────────
+ios/Pods/
+ios/build/
+ios/Podfile.lock
+ios/*.xcworkspace/xcuserdata/
+ios/*.xcodeproj/xcuserdata/
+ios/*.xcuserstate
+ios/DerivedData/
+
+# ─── Tests / coverage ───────────────────────────────────────────────────────
+coverage/
+*.lcov
+.nyc_output/
+
+# ─── Logs / temp ─────────────────────────────────────────────────────────────
+*.log
+*.pid
+*.seed
+*.pid.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+
+# OS temp
+tmp/
+temp/
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+.history
+.netlify
+.vercel
+.workspace
+*.tsbuildinfo
+
+# Generated app icons / splash (uncomment if you regenerate via script)
+# assets/icon.png
+# assets/splash.png
+# assets/favicon.png
+
+# ─── Track these (overrides of ignores above) ────────────────────────────────
+# The Whisper model is intentionally committed (it's the bundled on-device ASR model).
+!assets/whisper/ggml-base.bin
+!assets/whisper/*.bin
+
+# Debug keystore is committed for reproducible debug builds.
+!android/app/debug.keystore

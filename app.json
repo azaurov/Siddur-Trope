@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Siddur & Trope",
+    "slug": "siddur-trope",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1E3A8A"
+    },
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "android": {
+      "package": "com.temple.siddur.trope",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1E3A8A"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.temple.siddur.trope",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Record your voice to practice trope chanting and Hebrew prayer recitation."
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "11111111-1111-1111-1111-111111111111"
+      }
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}

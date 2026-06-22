@@ -14,6 +14,12 @@ import { TROPES, TROPE_TIER_NAMES, TROPE_SYSTEMS, TROPE_MNEMONIC, TROPE_VERSES }
 import { PRAYERS, HEBREW_VOCAB } from "./assets/data/prayers";
 import { UNIT_EXERCISES, TROPE_ID_QUIZ } from "./assets/data/exercises";
 import { transcribeFile, ensureWhisperLoaded, whisperStatus } from "./assets/lib/whisper";
+import {
+  loadProfiles, saveProfiles, loadActiveId, saveActiveId,
+  createProfile as createProfileStore, updateProfile, deleteProfile as deleteProfileStore,
+  updateProfileStats, setProfileAchievements, bumpStreak,
+} from "./assets/lib/profiles";
+import { ProfileSelectScreen, ProfileCreateScreen, ProfileSwitcherModal } from "./assets/lib/profiles_ui";
 import * as FileSystem from "expo-file-system/legacy";
 import { NativeModules } from "react-native";
 
@@ -745,7 +751,7 @@ function RecitationScreen({ item, kind, onComplete, onQuit, color }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ─── Home ──────────────────────────────────────────────────────────────── */
-function HomeScreen({ onSelectUnit, onSelectTropes, onSelectPrayers, onSelectVocabulary, onAchievements, stats, voicesChecked, availableTtsLocales }) {
+function HomeScreen({ onSelectUnit, onSelectTropes, onSelectPrayers, onSelectVocabulary, onAchievements, stats, voicesChecked, availableTtsLocales, profile, onSwitchProfile }) {
   const dailyTip = TIPS[new Date().getDate() % TIPS.length];
   const unlocked = ACHIEVEMENTS.filter(a => a.check(stats)).length;
   return (
@@ -753,6 +759,19 @@ function HomeScreen({ onSelectUnit, onSelectTropes, onSelectPrayers, onSelectVoc
       <StatusBar barStyle="light-content" backgroundColor="#1E3A8A" />
       <ScrollView>
         <View style={styles.homeHeader}>
+          {profile && (
+            <TouchableOpacity
+              onPress={onSwitchProfile}
+              style={styles.profilePill}
+              accessibilityLabel={`Active profile: ${profile.name}. Tap to switch.`}
+            >
+              <View style={[styles.profilePillAvatar, { backgroundColor: profile.color }]}>
+                <Text style={styles.profilePillEmoji}>{profile.avatar}</Text>
+              </View>
+              <Text style={styles.profilePillName}>{profile.name}</Text>
+              <Text style={styles.profilePillChevron}>⇅</Text>
+            </TouchableOpacity>
+          )}
           <Text style={styles.homeHeaderEyebrow}>SIDDUR & TROPE</Text>
           <Text style={styles.homeTitle}>Workbook</Text>
           <Text style={styles.homeSubtitle}>21 units · 26 trope marks · 9 prayers</Text>
@@ -1444,7 +1463,23 @@ export default function App() {
   const [activeLesson, setActiveLesson] = useState(null);
   const [activePrayer, setActivePrayer] = useState(null);
   const [activeRecite, setActiveRecite] = useState(null);
-  const [stats, setStats] = useState({
+
+  // ── Profile state ─────────────────────────────────────────────────────
+  // profiles: array of { id, name, avatar, color, stats, achievements, ... }
+  // activeProfileId: id of currently selected profile (null = show picker)
+  // stats: derived from active profile (mirrors profiles[i].stats for fast access)
+  const [profiles, setProfiles] = useState([]);
+  const [activeProfileId, setActiveProfileId] = useState(null);
+  const [profileBootstrapped, setProfileBootstrapped] = useState(false);
+  const [showProfilePicker, setShowProfilePicker] = useState(false);
+  const [showProfileCreate, setShowProfileCreate] = useState(false);
+  const [showSwitcher, setShowSwitcher] = useState(false);
+
+  // Compute the active profile object (or null) and a stats object that always
+  // matches the active profile. Components read stats like before — no API
+  // change at the call sites.
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) || null;
+  const [stats, setStatsLocal] = useState({
     streak: 0,
     totalXP: 0,
     lessons: 0,
@@ -1453,6 +1488,27 @@ export default function App() {
     recordings: 0,
     units_completed: 0,
   });
+
+  // Wrapper around setStats that also persists to the active profile's stats.
+  // All existing call sites use setStats(newStats) — they keep working unchanged.
+  const setStats = useCallback((updater) => {
+    setStatsLocal((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (activeProfileId) {
+        // Persist to AsyncStorage (fire and forget; UI is already updated).
+        updateProfileStats(activeProfileId, next).catch((err) =>
+          console.warn("[profiles] persist stats failed:", err)
+        );
+        // Mirror into the in-memory profile too so UI re-renders are consistent.
+        setProfiles((prevProfiles) =>
+          prevProfiles.map((p) =>
+            p.id === activeProfileId ? { ...p, stats: { ...p.stats, ...next } } : p
+          )
+        );
+      }
+      return next;
+    });
+  }, [activeProfileId]);
   const [resultData, setResultData] = useState(null);
   const [availableTtsLocales, setAvailableTtsLocales] = useState(new Set());
 
@@ -1487,6 +1543,80 @@ export default function App() {
       try { Speech.warmupAsync?.(); } catch {}
     }
   }, [availableTtsLocales]);
+
+  // ── Profile bootstrap ─────────────────────────────────────────────────
+  // Load persisted profiles on app start, then either restore the active one
+  // or leave activeProfileId null so the picker screen shows.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = await loadProfiles();
+        const storedActiveId = await loadActiveId();
+        if (cancelled) return;
+        setProfiles(stored);
+        const exists = stored.find((p) => p.id === storedActiveId);
+        if (exists) {
+          setActiveProfileId(exists.id);
+          setStatsLocal(exists.stats || {
+            streak: 0, totalXP: 0, lessons: 0, perfectLessons: 0,
+            trope_correct: 0, recordings: 0, units_completed: 0,
+          });
+        }
+        // else: no active profile; show picker screen on first render
+      } catch (err) {
+        console.warn("[profiles] bootstrap failed:", err);
+      } finally {
+        if (!cancelled) setProfileBootstrapped(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Profile actions ───────────────────────────────────────────────────
+  const handleSelectProfile = async (id) => {
+    const p = profiles.find((x) => x.id === id);
+    if (!p) return;
+    setActiveProfileId(id);
+    await saveActiveId(id);
+    setStatsLocal(p.stats || {
+      streak: 0, totalXP: 0, lessons: 0, perfectLessons: 0,
+      trope_correct: 0, recordings: 0, units_completed: 0,
+    });
+    setShowProfilePicker(false);
+    setShowSwitcher(false);
+  };
+
+  const handleCreateProfile = () => {
+    setShowProfilePicker(false);
+    setShowSwitcher(false);
+    setShowProfileCreate(true);
+  };
+
+  const handleProfileCreated = async (profile /*, wasEditing */) => {
+    // Re-load profiles so the just-created one is in state with its server id.
+    const fresh = await loadProfiles();
+    setProfiles(fresh);
+    setActiveProfileId(profile.id);
+    await saveActiveId(profile.id);
+    setStatsLocal(profile.stats);
+    setShowProfileCreate(false);
+  };
+
+  const handleDeleteProfile = async (id) => {
+    const fresh = await deleteProfileStore(id);
+    setProfiles(fresh);
+    if (activeProfileId === id) {
+      const next = fresh[0]?.id ?? null;
+      setActiveProfileId(next);
+      await saveActiveId(next);
+      const nextProfile = fresh.find((p) => p.id === next);
+      setStatsLocal(nextProfile?.stats || {
+        streak: 0, totalXP: 0, lessons: 0, perfectLessons: 0,
+        trope_correct: 0, recordings: 0, units_completed: 0,
+      });
+    }
+  };
 
   const handleUnitSelect = (unit) => { setActiveUnit(unit); setScreen("unit-detail"); };
   const handleStartLesson = (lesson) => {
@@ -1564,17 +1694,41 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <View style={{ flex: 1, backgroundColor: "#fff" }}>
-        {screen === "home" && (
-          <HomeScreen
-            onSelectUnit={handleUnitSelect}
-            onSelectTropes={() => setScreen("tropes")}
-            onSelectPrayers={() => setScreen("prayers")}
-            onSelectVocabulary={() => setScreen("vocabulary")}
-            onAchievements={() => setScreen("achievements")}
-            stats={stats}
-            voicesChecked={voicesChecked}
-            availableTtsLocales={availableTtsLocales}
+        {/* Profile gates: before bootstrap finishes, show nothing.
+            When there's no active profile, show the picker. */}
+        {!profileBootstrapped ? null :
+         showProfileCreate ? (
+          <ProfileCreateScreen
+            onCancel={() => {
+              setShowProfileCreate(false);
+              if (profiles.length === 0) setShowProfilePicker(true);
+            }}
+            onCreated={handleProfileCreated}
           />
+         ) :
+         !activeProfileId ? (
+          <ProfileSelectScreen
+            profiles={profiles}
+            activeId={activeProfileId}
+            onSelectProfile={handleSelectProfile}
+            onCreateNew={handleCreateProfile}
+            onDeleteProfile={handleDeleteProfile}
+          />
+         ) : (
+          <>
+            {screen === "home" && (
+              <HomeScreen
+                onSelectUnit={handleUnitSelect}
+                onSelectTropes={() => setScreen("tropes")}
+                onSelectPrayers={() => setScreen("prayers")}
+                onSelectVocabulary={() => setScreen("vocabulary")}
+                onAchievements={() => setScreen("achievements")}
+                stats={stats}
+                voicesChecked={voicesChecked}
+                availableTtsLocales={availableTtsLocales}
+                profile={activeProfile}
+                onSwitchProfile={() => setShowSwitcher(true)}
+              />
         )}
         {screen === "unit-detail" && activeUnit && (
           <UnitDetailScreen unit={activeUnit} onStartLesson={handleStartLesson} onBack={() => setScreen("home")} />
@@ -1633,6 +1787,17 @@ export default function App() {
             onHome={() => setScreen("home")}
           />
         )}
+        <ProfileSwitcherModal
+          visible={showSwitcher}
+          profiles={profiles}
+          activeId={activeProfileId}
+          onClose={() => setShowSwitcher(false)}
+          onSwitch={handleSelectProfile}
+          onAddNew={handleCreateProfile}
+          onDelete={handleDeleteProfile}
+        />
+          </>
+        )}
       </View>
     </SafeAreaProvider>
   );
@@ -1648,6 +1813,20 @@ const styles = StyleSheet.create({
   quitBtnText: { fontSize: 18, color: "#AFAFAF", fontWeight: "800" },
 
   // ─── Home screen ────────────────────────────────────────────────────────
+  profilePill: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999,
+    marginBottom: 12,
+  },
+  profilePillAvatar: {
+    width: 24, height: 24, borderRadius: 12,
+    justifyContent: "center", alignItems: "center",
+    marginRight: 8,
+  },
+  profilePillEmoji: { fontSize: 14 },
+  profilePillName: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
+  profilePillChevron: { color: "rgba(255,255,255,0.85)", fontSize: 16, marginLeft: 8, fontWeight: "900" },
   homeHeader: { backgroundColor: "#1E3A8A", padding: 28, paddingTop: 20, alignItems: "center" },
   homeHeaderEyebrow: { color: "rgba(255,255,255,0.8)", fontWeight: "900", letterSpacing: 2, fontSize: 12, marginBottom: 6 },
   homeTitle: { color: "#fff", fontSize: 34, fontWeight: "900", letterSpacing: -0.5 },

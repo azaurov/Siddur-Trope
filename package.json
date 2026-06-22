@@ -8,6 +8,7 @@
     "ios": "expo run:ios"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "^56.0.3",
     "expo-asset": "~56.0.17",
     "expo-audio": "~56.0.12",

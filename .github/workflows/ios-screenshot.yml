@@ -66,24 +66,61 @@ jobs:
             -quiet \
             build
 
-      - name: Boot simulator, install app, screenshot
+      - name: Install idb for UI automation
+        run: pip3 install fb-idb
+
+      - name: Boot simulator and install app
         run: |
           APP=$(find /tmp/DerivedData -name "*.app" -not -path "*/PackageFrameworks/*" | head -1)
           echo "App: $APP"
-
           xcrun simctl boot "$SIM_UDID" || true
+          open -a Simulator --args -CurrentDeviceUDID "$SIM_UDID" || true
           sleep 6
-
           xcrun simctl install "$SIM_UDID" "$APP"
+
+      - name: Start idb companion
+        run: |
+          idb_companion --udid "$SIM_UDID" --only-target 2>/tmp/idb.log &
+          sleep 3
+          idb connect "$SIM_UDID" || true
+
+      - name: Launch app and click through to home screen
+        run: |
           xcrun simctl launch "$SIM_UDID" com.temple.siddur.trope
-          sleep 8
+          sleep 5
 
-          xcrun simctl io "$SIM_UDID" screenshot /tmp/screenshot-home.png
-          echo "Screenshot saved."
+          # Screenshot 1: profile picker
+          xcrun simctl io "$SIM_UDID" screenshot /tmp/ss1-picker.png
 
-      - name: Upload screenshot
+          # Tap "Add new profile" button (center-x=201, y≈190 in points)
+          idb ui tap 201 190 --udid "$SIM_UDID"
+          sleep 2
+
+          # Screenshot 2: create profile screen
+          xcrun simctl io "$SIM_UDID" screenshot /tmp/ss2-create.png
+
+          # Tap the name input field (center, roughly y=200)
+          idb ui tap 201 200 --udid "$SIM_UDID"
+          sleep 0.5
+
+          # Type a name
+          idb ui text "Student" --udid "$SIM_UDID"
+          sleep 0.5
+
+          # Tap "Create profile" button (near bottom, y≈790)
+          idb ui tap 201 790 --udid "$SIM_UDID"
+          sleep 4
+
+          # Screenshot 3: home screen
+          xcrun simctl io "$SIM_UDID" screenshot /tmp/ss3-home.png
+          echo "All screenshots saved."
+
+      - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
           name: ios-screenshot
-          path: /tmp/screenshot-home.png
+          path: |
+            /tmp/ss1-picker.png
+            /tmp/ss2-create.png
+            /tmp/ss3-home.png
           retention-days: 14

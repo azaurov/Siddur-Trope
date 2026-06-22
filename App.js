@@ -485,6 +485,61 @@ function RecitationScreen({ item, kind, onComplete, onQuit, color }) {
   const [whisperReady, setWhisperReady] = useState(null); // null=loading, true, false
   const [transcriptPreview, setTranscriptPreview] = useState("");
 
+  // Web/PWA short-circuit: recording requires native Android/iOS modules
+  // (PermissionsAndroid, expo-audio recorder hooks, whisper.rn + the Kotlin
+  // AAC→WAV bridge). On web we render a friendly "open in mobile" panel
+  // and skip every effect below that would otherwise call into native APIs.
+  // All hooks above MUST stay unconditional (rules-of-hooks); the early return
+  // only affects what JSX renders.
+  if (Platform.OS === "web") {
+    return (
+      <SafeAreaView style={[styles.recitationScreen, { backgroundColor: color + "08" }]}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={onQuit} style={styles.quitBtn}>
+            <Text style={styles.quitBtnText}>✕</Text>
+          </TouchableOpacity>
+          <View style={[styles.recitationTitle, { backgroundColor: color }]}>
+            <Text style={styles.recitationTitleText}>{item.title || item.ref}</Text>
+          </View>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 80 }}>
+          <View style={[styles.reciteRefCard, { borderColor: color + "44" }]}>
+            <Text style={styles.reciteLabel}>{kind === "trope" ? "VERSE — read it aloud" : "PRAYER — read it aloud"}</Text>
+            <Text style={[styles.hebrewLarge, { color }]} numberOfLines={6}>
+              {item.hebrew}
+            </Text>
+            <Text style={styles.reciteTranslit} numberOfLines={6}>{item.transliteration}</Text>
+            <Text style={styles.reciteEnglish} numberOfLines={4}>{item.english}</Text>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+              <SpeakButton text={item.hebrew} color={color} />
+              <TouchableOpacity
+                style={[styles.hearReference, { borderColor: color + "44" }]}
+                onPress={() => Speech.speak(item.transliteration, { language: "en-US" })}
+                activeOpacity={0.7}>
+                <Text style={[styles.hearRefText, { color }]}>🔊 Translit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View style={[styles.recordCard, { borderColor: "#FCD34D", marginTop: 16 }]}>
+            <Text style={styles.recordLabel}>RECORDING</Text>
+            <View style={{ alignItems: "center", marginTop: 8 }}>
+              <Text style={{ fontSize: 36 }}>📱</Text>
+              <Text style={{ color: "#92400E", fontWeight: "700", textAlign: "center", fontSize: 14, lineHeight: 20, marginTop: 8 }}>
+                Voice recording and the pronunciation judge require the mobile app.
+              </Text>
+              <Text style={{ color: "#78350F", textAlign: "center", fontSize: 12, lineHeight: 18, marginTop: 6, paddingHorizontal: 8 }}>
+                Hebrew TTS works in your browser above. To record yourself and get pronunciation feedback,
+                install Siddur & Trope on Android or iOS.
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   // Explicitly request mic permission when entering the screen.
   // expo-audio's recorder checks permission internally, but on Android 13+ the OS
   // doesn't grant RECORD_AUDIO until the user taps Allow — we make that request

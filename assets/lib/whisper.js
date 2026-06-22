@@ -10,12 +10,42 @@
 // Usage:
 //   await ensureWhisperLoaded()      // idempotent; lazy-loads on first call
 //   const text = await transcribeFile(wavPath)
+//
+// Web/PWA note: whisper.rn is a native module that links to whisper.cpp's
+// JNI bindings. It cannot run in a browser. We use `eval('require')` to load
+// it lazily AND hide the call from Metro's static analyzer so the web bundle
+// doesn't try to resolve it (and fail because whisper.rn has no .web entry).
+// Callers that hit this on web get a clear "not available on web" error.
 
-import { initWhisper, releaseAllWhisper } from "whisper.rn";
+// `eval('require')` defeats Metro's static analyzer. On native this behaves
+// identically to a regular require(); on web the require call is never made
+// because we short-circuit on Platform.OS first.
+const dynamicRequire = (mod) => eval('require')(mod);
+
+let _native = null;
+let _nativeLoadError = null;
+async function getNative() {
+  if (_native) return _native;
+  if (_nativeLoadError) throw _nativeLoadError;
+  try {
+    const { Platform } = dynamicRequire("react-native");
+    if (Platform.OS !== "android" && Platform.OS !== "ios") {
+      throw new Error("Whisper is not available on web — use the mobile app for recording.");
+    }
+    _native = dynamicRequire("whisper.rn");
+    return _native;
+  } catch (e) {
+    _nativeLoadError = e;
+    throw e;
+  }
+}
 
 // Top-level require so Metro's bundler resolves the asset at build time.
 // Resolving it lazily inside resolveModelPath() made Metro treat it as a
 // string path and fail to inline the asset id — hence "missing from bundle".
+// The require itself is benign: it's just the LFS pointer (134 bytes), and
+// Metro only inlines the asset reference — no fetch happens until the user
+// actually runs a recording flow.
 const WHISPER_MODEL_ASSET = require("../../assets/whisper/ggml-base.bin");
 
 // Resolve a stable file path for the bundled ggml-base.bin.
@@ -51,13 +81,14 @@ async function resolveModelPath() {
 }
 
 export async function ensureWhisperLoaded() {
+  const native = await getNative();
   if (context) return context;
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     const path = await resolveModelPath();
     // 4 threads is a good default on modern octa-core phones; whisper.cpp
     // uses threadpool internally so more doesn't always help.
-    context = await initWhisper({ filePath: path, useGpu: false });
+    context = await native.initWhisper({ filePath: path, useGpu: false });
     return context;
   })();
   try {
@@ -80,7 +111,10 @@ export async function transcribeFile(wavPath, { language = "he", onProgress } = 
 
 export async function releaseWhisper() {
   if (context) {
-    try { await releaseAllWhisper(); } catch {}
+    try {
+      const native = await getNative();
+      await native.releaseAllWhisper();
+    } catch {}
     context = null;
     modelPath = null;
     loadPromise = null;

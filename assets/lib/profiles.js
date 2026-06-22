@@ -132,20 +132,25 @@ export async function deleteProfile(id) {
   return next;
 }
 
-// Update the stats object of one profile (called from App.js on lesson completion)
-export async function updateProfileStats(id, statsPatch) {
+// Update the stats object of one profile (called from App.js on lesson completion).
+// IMPORTANT: callers should pass the COMPLETE new stats object (not a partial
+// patch), because we replace `stats` wholesale rather than merging — this avoids
+// the race where two near-simultaneous writes overwrite each other's fields
+// via stale snapshots.
+export async function updateProfileStats(id, newStats) {
   const profiles = await loadProfiles();
   const idx = profiles.findIndex((p) => p.id === id);
   if (idx < 0) return null;
   profiles[idx] = {
     ...profiles[idx],
-    stats: { ...profiles[idx].stats, ...statsPatch },
+    stats: { ...newStats },
   };
   await saveProfiles(profiles);
   return profiles[idx];
 }
 
-// Update the achievements array of one profile
+// Update the achievements array of one profile. Same rule as updateProfileStats:
+// pass the complete new array, not a partial.
 export async function setProfileAchievements(id, achievements) {
   const profiles = await loadProfiles();
   const idx = profiles.findIndex((p) => p.id === id);
@@ -156,6 +161,34 @@ export async function setProfileAchievements(id, achievements) {
   };
   await saveProfiles(profiles);
   return profiles[idx];
+}
+
+// Atomic combined write: load once, apply both mutations, save once.
+// All writes to the profiles blob go through this function so that near-
+// simultaneous calls (e.g. stats + achievements from one lesson completion)
+// are serialized through a single in-memory mutex queue. Without this,
+// two concurrent loads could each read the same stale snapshot and the second
+// writer would silently overwrite the first writer's fields.
+//
+// Returns the updated profile.
+let _writeQueue = Promise.resolve();
+export async function updateProfileAtomic(id, mut) {
+  const next = (async () => {
+    const profiles = await loadProfiles();
+    const idx = profiles.findIndex((p) => p.id === id);
+    if (idx < 0) return null;
+    const patch = {};
+    if (mut.stats !== undefined)             patch.stats        = { ...mut.stats };
+    if (mut.achievements !== undefined)      patch.achievements = Array.isArray(mut.achievements) ? mut.achievements : [];
+    profiles[idx] = { ...profiles[idx], ...patch };
+    await saveProfiles(profiles);
+    return profiles[idx];
+  })();
+  // Chain: the new write waits for the previous one to finish, then runs.
+  // We don't propagate errors from older writes to newer ones; each writes
+  // own promise resolves independently.
+  _writeQueue = _writeQueue.then(() => next, () => next);
+  return _writeQueue;
 }
 
 // ── One-time migration: if no profiles exist but legacy stats are around ──

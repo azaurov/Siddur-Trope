@@ -1,0 +1,70 @@
+name: iOS Screenshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  screenshot:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prebuild iOS
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        run: cd ios && pod install
+
+      - name: Build for simulator
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 1 | head -1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -derivedDataPath /tmp/DerivedData \
+            -quiet \
+            build
+
+      - name: Boot simulator, install app, screenshot
+        run: |
+          # Find the built .app
+          APP=$(find /tmp/DerivedData -name "*.app" -not -path "*/PackageFrameworks/*" | head -1)
+          echo "App: $APP"
+
+          # Boot iPhone 16 simulator
+          UDID=$(xcrun simctl list devices available | grep 'iPhone 16 (' | grep -v 'Plus\|Pro' | head -1 | grep -oE '[A-F0-9-]{36}')
+          echo "Simulator UDID: $UDID"
+          xcrun simctl boot "$UDID"
+          sleep 5
+
+          # Install and launch
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" com.temple.siddur.trope
+          sleep 6
+
+          # Screenshot
+          xcrun simctl io "$UDID" screenshot /tmp/screenshot-home.png
+          echo "Screenshot saved."
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-screenshot
+          path: /tmp/screenshot-home.png
+          retention-days: 14

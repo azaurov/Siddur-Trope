@@ -20,7 +20,7 @@ import {
 } from "./profiles";
 
 // ── Profile Select Screen ──────────────────────────────────────────────────
-export function ProfileSelectScreen({ profiles, activeId, onSelectProfile, onCreateNew, onDeleteProfile }) {
+export function ProfileSelectScreen({ profiles, activeId, onSelectProfile, onCreateNew, onDeleteProfile, onEditProfile }) {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
       <StatusBar barStyle="light-content" backgroundColor="#1E3A8A" />
@@ -44,6 +44,8 @@ export function ProfileSelectScreen({ profiles, activeId, onSelectProfile, onCre
                 isActive={p.id === activeId}
                 onPress={() => onSelectProfile(p.id)}
                 onLongPress={() => confirmDelete(p, onDeleteProfile)}
+                onEdit={onEditProfile}
+                showEdit={!!onEditProfile}
               />
             ))}
           </View>
@@ -60,7 +62,7 @@ export function ProfileSelectScreen({ profiles, activeId, onSelectProfile, onCre
   );
 }
 
-function ProfileRow({ profile, isActive, onPress, onLongPress }) {
+function ProfileRow({ profile, isActive, onPress, onLongPress, onEdit, showEdit }) {
   const { name, avatar, color, stats } = profile;
   const xp = stats?.totalXP || 0;
   const lessons = stats?.lessons || 0;
@@ -83,7 +85,18 @@ function ProfileRow({ profile, isActive, onPress, onLongPress }) {
           ⚡ {xp} XP · 🎓 {lessons} lessons
         </Text>
       </View>
-      <Text style={styles.chevron}>›</Text>
+      {showEdit && onEdit ? (
+        <TouchableOpacity
+          onPress={(e) => { e.stopPropagation?.(); onEdit(profile); }}
+          style={styles.editBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel={`Edit ${profile.name}`}
+        >
+          <Text style={styles.editBtnText}>✎</Text>
+        </TouchableOpacity>
+      ) : (
+        <Text style={styles.chevron}>›</Text>
+      )}
     </Pressable>
   );
 }
@@ -106,9 +119,15 @@ function confirmDelete(profile, onDeleteProfile) {
 // ── Profile Create Screen ─────────────────────────────────────────────────
 export function ProfileCreateScreen({ onCancel, onCreated, initial }) {
   const isEditing = !!initial;
+  // Defensively fall back to a default if the stored value isn't in the picker
+  // (could happen if DEFAULT_AVATARS is shrunk in a future version).
+  const safeAvatar = (initial?.avatar && DEFAULT_AVATARS.includes(initial.avatar))
+    ? initial.avatar : DEFAULT_AVATARS[0];
+  const safeColor = (initial?.color && DEFAULT_COLORS.includes(initial.color))
+    ? initial.color : DEFAULT_COLORS[0];
   const [name, setName] = useState(initial?.name || "");
-  const [avatar, setAvatar] = useState(initial?.avatar || DEFAULT_AVATARS[0]);
-  const [color, setColor] = useState(initial?.color || DEFAULT_COLORS[0]);
+  const [avatar, setAvatar] = useState(safeAvatar);
+  const [color, setColor] = useState(safeColor);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -211,7 +230,7 @@ export function ProfileCreateScreen({ onCancel, onCreated, initial }) {
 // ── Profile Switcher Modal ─────────────────────────────────────────────────
 // Small overlay launched from the Home header to switch profiles without
 // returning to the full picker.
-export function ProfileSwitcherModal({ visible, profiles, activeId, onClose, onSwitch, onAddNew, onDelete }) {
+export function ProfileSwitcherModal({ visible, profiles, activeId, onClose, onSwitch, onAddNew, onDelete, onEdit }) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
@@ -225,6 +244,8 @@ export function ProfileSwitcherModal({ visible, profiles, activeId, onClose, onS
               isActive={p.id === activeId}
               onPress={() => { onSwitch(p.id); onClose(); }}
               onLongPress={() => confirmDelete(p, onDelete)}
+              onEdit={onEdit}
+              showEdit={!!onEdit}
             />
           ))}
           <TouchableOpacity
@@ -275,6 +296,13 @@ const styles = StyleSheet.create({
   profileName: { fontSize: 18, fontWeight: "800", color: "#1F2937" },
   profileStats: { fontSize: 13, color: "#6B7280", marginTop: 4, fontWeight: "600" },
   chevron: { fontSize: 32, color: "#9CA3AF", fontWeight: "300", paddingHorizontal: 8 },
+  editBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: "#EEF2FF",
+    justifyContent: "center", alignItems: "center",
+    marginLeft: 4,
+  },
+  editBtnText: { fontSize: 18, color: "#1E3A8A", fontWeight: "700" },
 
   // Add button
   addBtn: {

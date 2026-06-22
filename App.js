@@ -17,7 +17,7 @@ import { transcribeFile, ensureWhisperLoaded, whisperStatus } from "./assets/lib
 import {
   loadProfiles, saveProfiles, loadActiveId, saveActiveId,
   createProfile as createProfileStore, updateProfile, deleteProfile as deleteProfileStore,
-  updateProfileStats, setProfileAchievements, bumpStreak,
+  updateProfileStats, setProfileAchievements, updateProfileAtomic, bumpStreak,
 } from "./assets/lib/profiles";
 import { ProfileSelectScreen, ProfileCreateScreen, ProfileSwitcherModal } from "./assets/lib/profiles_ui";
 import * as FileSystem from "expo-file-system/legacy";
@@ -137,16 +137,30 @@ function ProgressBar({ current, total, color }) {
 }
 
 /* ─── Speak button (Hebrew TTS) ──────────────────────────────────────────── */
+// ── SpeakButton module-level cache ──────────────────────────────────────────
+// The first successful Hebrew-voice lookup is cached so subsequent taps
+// don't re-query the TTS engine. Without this, intermittent TTS-engine
+// startup can cause a flash of "voice missing" on otherwise-good devices.
+let _hebrewVoiceCached = null; // null = unknown, true/false = checked
 function SpeakButton({ text, color, size = 22 }) {
   const [speaking, setSpeaking] = useState(false);
-  const [missing, setMissing] = useState(false); // true if Hebrew voice not installed
+  const [missing, setMissing] = useState(false); // true if Hebrew voice not installed (briefly)
   const handle = async () => {
     try {
       Speech.stop();
-      // Check voices first; if no Hebrew voice installed, show the "missing voice" state briefly
-      const voices = await Speech.getAvailableVoicesAsync().catch(() => []);
-      const heLocale = voices.find(v => v.language?.toLowerCase().startsWith("he"));
-      if (!heLocale) {
+      // Module-level cache: first Hebrew-voice lookup is cached so subsequent
+      // taps don't re-query the TTS engine. Without this, intermittent TTS-
+      // engine startup can cause a flash of "voice missing" on otherwise-good
+      // devices. Cold path primes the cache.
+      let voiceOk;
+      if (_hebrewVoiceCached !== null) {
+        voiceOk = _hebrewVoiceCached;
+      } else {
+        const voices = await Speech.getAvailableVoicesAsync().catch(() => []);
+        voiceOk = !!voices.find(v => v.language?.toLowerCase().startsWith("he"));
+        _hebrewVoiceCached = voiceOk;
+      }
+      if (!voiceOk) {
         setMissing(true);
         setTimeout(() => setMissing(false), 1800);
         return;
@@ -1473,6 +1487,7 @@ export default function App() {
   const [profileBootstrapped, setProfileBootstrapped] = useState(false);
   const [showProfilePicker, setShowProfilePicker] = useState(false);
   const [showProfileCreate, setShowProfileCreate] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(null); // null = create mode, object = edit mode
   const [showSwitcher, setShowSwitcher] = useState(false);
 
   // Compute the active profile object (or null) and a stats object that always
@@ -1496,7 +1511,9 @@ export default function App() {
       const next = typeof updater === "function" ? updater(prev) : updater;
       if (activeProfileId) {
         // Persist to AsyncStorage (fire and forget; UI is already updated).
-        updateProfileStats(activeProfileId, next).catch((err) =>
+        // Use the atomic helper so this doesn't race with achievement writes
+        // in handleLessonComplete / handleReciteComplete.
+        updateProfileAtomic(activeProfileId, { stats: next }).catch((err) =>
           console.warn("[profiles] persist stats failed:", err)
         );
         // Mirror into the in-memory profile too so UI re-renders are consistent.
@@ -1590,16 +1607,35 @@ export default function App() {
   const handleCreateProfile = () => {
     setShowProfilePicker(false);
     setShowSwitcher(false);
+    setEditingProfile(null);
+    setShowProfileCreate(true);
+  };
+
+  const handleEditProfile = (profile) => {
+    setShowProfilePicker(false);
+    setShowSwitcher(false);
+    setEditingProfile(profile);
     setShowProfileCreate(true);
   };
 
   const handleProfileCreated = async (profile /*, wasEditing */) => {
-    // Re-load profiles so the just-created one is in state with its server id.
+    // Re-load profiles so the just-created/edited one is in state with its server id.
     const fresh = await loadProfiles();
     setProfiles(fresh);
-    setActiveProfileId(profile.id);
-    await saveActiveId(profile.id);
-    setStatsLocal(profile.stats);
+    if (!editingProfile) {
+      // New profile: activate it
+      setActiveProfileId(profile.id);
+      await saveActiveId(profile.id);
+      setStatsLocal(profile.stats);
+    } else {
+      // Edited profile: if it's the active one, refresh stats too (in case
+      // the edit only changed name/avatar/color, stats are unchanged — but
+      // we reload to be safe).
+      if (profile.id === activeProfileId) {
+        setStatsLocal(profile.stats);
+      }
+    }
+    setEditingProfile(null);
     setShowProfileCreate(false);
   };
 
@@ -1636,12 +1672,14 @@ export default function App() {
 
   const handleLessonComplete = useCallback(({ correctCount, xp, isPerfect, unitId, outOfHearts }) => {
     const completedSet = new Set([...(stats.units_completed_set || []), unitId].filter(Boolean));
+    const { streak, lastActiveDate } = bumpStreak(stats.streak || 0, stats.lastActiveDate || null);
     const newStats = {
       ...stats,
       totalXP: stats.totalXP + xp,
       lessons: stats.lessons + 1,
       perfectLessons: stats.perfectLessons + (isPerfect ? 1 : 0),
-      streak: stats.streak + 1,
+      streak,
+      lastActiveDate,
       trope_correct: stats.trope_correct + (unitId === "taamei-hamikra" || unitId === "trope-dichotomy" ? xp / 10 : 0),
       units_completed: completedSet.size,
       units_completed_set: Array.from(completedSet),
@@ -1650,6 +1688,22 @@ export default function App() {
     const prevUnlocked = new Set(ACHIEVEMENTS.filter(a => a.check(stats)).map(a => a.id));
     const newAchievements = ACHIEVEMENTS.filter(a => a.check(newStats) && !prevUnlocked.has(a.id));
     setStats(newStats);
+
+    // Atomic write: stats + achievements persisted in a single load/mutate/save
+    // cycle. Avoids the race where two near-simultaneous async writes each load
+    // the same stale snapshot and overwrite each other.
+    if (activeProfileId && newAchievements.length > 0) {
+      const stored = activeProfile?.achievements || [];
+      const merged = Array.from(new Set([...stored, ...newAchievements.map(a => a.id)]));
+      updateProfileAtomic(activeProfileId, { achievements: merged }).catch((err) =>
+        console.warn("[profiles] persist achievements failed:", err)
+      );
+      setProfiles((prevProfiles) =>
+        prevProfiles.map((p) =>
+          p.id === activeProfileId ? { ...p, achievements: merged } : p
+        )
+      );
+    }
     setResultData({
       correctCount: correctCount + (outOfHearts ? 0 : 0),
       total: activeLesson?.exercises?.length || 0,
@@ -1660,20 +1714,36 @@ export default function App() {
       outOfHearts,
     });
     setScreen("result");
-  }, [stats, activeLesson]);
+  }, [stats, activeLesson, activeProfileId, activeProfile]);
 
   const handleReciteComplete = useCallback(({ passed, duration, score, matches, total, transcript }) => {
     const xp = passed ? XP_PER_CORRECT * 3 : 0;  // recording practice earns 3× for the extra effort
+    const { streak, lastActiveDate } = bumpStreak(stats.streak || 0, stats.lastActiveDate || null);
     const newStats = {
       ...stats,
       totalXP: stats.totalXP + xp,
       lessons: stats.lessons + 1,
-      streak: stats.streak + 1,
+      streak,
+      lastActiveDate,
       recordings: (stats.recordings || 0) + 1,
     };
     const prevUnlocked = new Set(ACHIEVEMENTS.filter(a => a.check(stats)).map(a => a.id));
     const newAchievements = ACHIEVEMENTS.filter(a => a.check(newStats) && !prevUnlocked.has(a.id));
     setStats(newStats);
+
+    // Atomic write for achievements — see handleLessonComplete for rationale.
+    if (activeProfileId && newAchievements.length > 0) {
+      const stored = activeProfile?.achievements || [];
+      const merged = Array.from(new Set([...stored, ...newAchievements.map(a => a.id)]));
+      updateProfileAtomic(activeProfileId, { achievements: merged }).catch((err) =>
+        console.warn("[profiles] persist achievements failed:", err)
+      );
+      setProfiles((prevProfiles) =>
+        prevProfiles.map((p) =>
+          p.id === activeProfileId ? { ...p, achievements: merged } : p
+        )
+      );
+    }
     setResultData({
       correctCount: 1,
       total: 1,
@@ -1699,9 +1769,14 @@ export default function App() {
         {!profileBootstrapped ? null :
          showProfileCreate ? (
           <ProfileCreateScreen
+            initial={editingProfile}
             onCancel={() => {
               setShowProfileCreate(false);
+              setEditingProfile(null);
+              // Decide where to return to based on what was showing before
               if (profiles.length === 0) setShowProfilePicker(true);
+              else if (activeProfileId) setShowSwitcher(true);
+              else setShowProfilePicker(true);
             }}
             onCreated={handleProfileCreated}
           />
@@ -1713,6 +1788,7 @@ export default function App() {
             onSelectProfile={handleSelectProfile}
             onCreateNew={handleCreateProfile}
             onDeleteProfile={handleDeleteProfile}
+            onEditProfile={handleEditProfile}
           />
          ) : (
           <>
@@ -1795,6 +1871,7 @@ export default function App() {
           onSwitch={handleSelectProfile}
           onAddNew={handleCreateProfile}
           onDelete={handleDeleteProfile}
+          onEdit={handleEditProfile}
         />
           </>
         )}

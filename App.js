@@ -22,6 +22,7 @@ import {
 import { ProfileSelectScreen, ProfileCreateScreen, ProfileSwitcherModal } from "./assets/lib/profiles_ui";
 import * as FileSystem from "expo-file-system/legacy";
 import { NativeModules } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -1584,28 +1585,52 @@ export default function App() {
   const [resultData, setResultData] = useState(null);
   const [availableTtsLocales, setAvailableTtsLocales] = useState(new Set());
 
-  // Detect Hebrew TTS voice availability
+  // Detect Hebrew TTS voice availability.
+  // On Android installed APKs the TTS engine can take many seconds to init
+  // and returns empty arrays in the meantime. We persist a positive result so
+  // that subsequent launches start optimistically and never show a false banner.
+  const HE_VOICE_KEY = "@siddur-trope:hebrewVoiceConfirmed";
   const [voicesChecked, setVoicesChecked] = useState(false);
   useEffect(() => {
     let cancelled = false;
     let attempts = 0;
+    const commit = (hasHe) => {
+      if (cancelled) return;
+      const locales = hasHe ? new Set(["he"]) : new Set();
+      setAvailableTtsLocales(locales);
+      setVoicesChecked(true);
+    };
     const check = async () => {
       const voices = await Speech.getAvailableVoicesAsync().catch(() => []);
       if (cancelled) return;
       attempts++;
-      console.log("[TTS] check attempt", attempts, "voices.length=", voices.length, "he-?", voices.some(v => (v.language||"").toLowerCase().startsWith("he")));
+      const hasHe = voices.some(v => (v.language || "").toLowerCase().startsWith("he"));
+      console.log("[TTS] check attempt", attempts, "voices.length=", voices.length, "he=", hasHe);
       if (voices.length > 0) {
-        const locales = new Set(voices.map(v => v.language?.split("-")[0].toLowerCase()).filter(Boolean));
-        setAvailableTtsLocales(locales);
-        setVoicesChecked(true);
-      } else if (attempts >= 3) {
-        setAvailableTtsLocales(new Set());
-        setVoicesChecked(true);
+        // Got a real voice list — trust it.
+        if (hasHe) {
+          AsyncStorage.setItem(HE_VOICE_KEY, "1").catch(() => {});
+          _hebrewVoiceCached = true;
+        }
+        commit(hasHe);
+      } else if (attempts >= 6) {
+        // Engine never responded with voices; fall back to persisted value.
+        const saved = await AsyncStorage.getItem(HE_VOICE_KEY).catch(() => null);
+        commit(saved === "1");
       } else {
         setTimeout(check, 1500);
       }
     };
-    check();
+    // Seed from AsyncStorage before first async check so returning users
+    // never see the banner flash on launch.
+    AsyncStorage.getItem(HE_VOICE_KEY).catch(() => null).then(saved => {
+      if (cancelled) return;
+      if (saved === "1") {
+        setAvailableTtsLocales(new Set(["he"]));
+        _hebrewVoiceCached = true;
+      }
+      check();
+    });
     return () => { cancelled = true; };
   }, []);
 

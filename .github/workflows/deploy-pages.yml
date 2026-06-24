@@ -1,0 +1,122 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Export web build
+        run: npx expo export --platform web --output-dir dist
+
+      - name: Copy PWA assets
+        run: cp public/manifest.json public/sw.js dist/
+
+      - name: Write GitHub Pages manifest
+        run: |
+          cat > dist/manifest.json <<'EOF'
+          {
+            "name": "Siddur & Trope",
+            "short_name": "SiddurTrope",
+            "description": "Workbook for Jewish prayers and Biblical cantillation marks",
+            "lang": "en",
+            "start_url": "/Siddur-Trope/",
+            "scope": "/Siddur-Trope/",
+            "display": "standalone",
+            "orientation": "portrait",
+            "theme_color": "#1E3A8A",
+            "background_color": "#1E3A8A",
+            "icons": [
+              {
+                "src": "/Siddur-Trope/favicon.ico",
+                "sizes": "64x64 32x32 24x24 16x16",
+                "type": "image/x-icon"
+              }
+            ]
+          }
+          EOF
+
+      - name: Write GitHub Pages service worker
+        run: |
+          cat > dist/sw.js <<'EOF'
+          const CACHE_NAME = "siddur-trope-v1";
+          const BASE = "/Siddur-Trope";
+          const APP_SHELL = [BASE + "/", BASE + "/index.html", BASE + "/manifest.json", BASE + "/favicon.ico"];
+
+          self.addEventListener("install", (event) => {
+            event.waitUntil(
+              caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+            );
+            self.skipWaiting();
+          });
+
+          self.addEventListener("activate", (event) => {
+            event.waitUntil(
+              caches.keys().then((keys) =>
+                Promise.all(
+                  keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+                )
+              )
+            );
+            self.clients.claim();
+          });
+
+          self.addEventListener("fetch", (event) => {
+            const req = event.request;
+            if (req.method !== "GET") return;
+            if (req.mode === "navigate") {
+              event.respondWith(
+                fetch(req)
+                  .then((res) => {
+                    const copy = res.clone();
+                    caches.open(CACHE_NAME).then((c) => c.put(BASE + "/", copy));
+                    return res;
+                  })
+                  .catch(() => caches.match(BASE + "/index.html").then((r) => r || new Response("Offline", { status: 503 })))
+              );
+            }
+          });
+          EOF
+
+      - name: Patch PWA tags into index.html
+        run: node scripts/patch-web-pwa.js dist /Siddur-Trope
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

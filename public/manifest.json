@@ -1,0 +1,19 @@
+{
+  "name": "Siddur & Trope",
+  "short_name": "SiddurTrope",
+  "description": "Workbook for Jewish prayers and Biblical cantillation marks",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#1E3A8A",
+  "background_color": "#1E3A8A",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}

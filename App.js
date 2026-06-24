@@ -829,6 +829,15 @@ function HomeScreen({ onSelectUnit, onSelectTropes, onSelectPrayers, onSelectVoc
       <StatusBar barStyle="light-content" backgroundColor="#1E3A8A" />
       <ScrollView>
         <View style={styles.homeHeader}>
+          {Platform.OS === "web" && (
+            <TouchableOpacity
+              onPress={() => Linking.openURL("https://azaurov.github.io/Siddur-Trope/")}
+              style={styles.reloadBtn}
+              accessibilityLabel="Reload app"
+            >
+              <Text style={styles.reloadBtnText}>↺</Text>
+            </TouchableOpacity>
+          )}
           {profile && (
             <TouchableOpacity
               onPress={onSwitchProfile}
@@ -1985,6 +1994,8 @@ const styles = StyleSheet.create({
   profilePillName: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
   profilePillChevron: { color: "rgba(255,255,255,0.85)", fontSize: 16, marginLeft: 8, fontWeight: "900" },
   homeHeader: { backgroundColor: "#1E3A8A", padding: 28, paddingTop: 20, alignItems: "center" },
+  reloadBtn: { position: "absolute", top: 10, right: 12, padding: 6, zIndex: 10 },
+  reloadBtnText: { fontSize: 22, color: "rgba(255,255,255,0.7)" },
   homeHeaderEyebrow: { color: "rgba(255,255,255,0.8)", fontWeight: "900", letterSpacing: 2, fontSize: 12, marginBottom: 6 },
   homeTitle: { color: "#fff", fontSize: 34, fontWeight: "900", letterSpacing: -0.5 },
   homeSubtitle: { color: "rgba(255,255,255,0.8)", fontWeight: "700", marginTop: 4, fontSize: 14 },

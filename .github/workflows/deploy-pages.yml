@@ -32,6 +32,8 @@ jobs:
 
       - name: Export web build
         run: npx expo export --platform web --output-dir dist
+        env:
+          EXPO_BASE_URL: /Siddur-Trope
 
       - name: Copy PWA assets
         run: cp public/manifest.json public/sw.js dist/

@@ -5,8 +5,7 @@ import {
   Platform, Dimensions, Alert, Linking,
 } from "react-native";
 import * as Speech from "expo-speech";
-import { useAudioRecorder, useAudioRecorderState, useAudioPlayer, useAudioPlayerStatus, RecordingPresets } from "expo-audio";
-import { PermissionsAndroid } from "react-native";
+import { useAudioRecorder, useAudioRecorderState, useAudioPlayer, useAudioPlayerStatus, RecordingPresets, requestRecordingPermissionsAsync, getRecordingPermissionsAsync } from "expo-audio";
 import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { UNITS, TIPS } from "./assets/data/units";
@@ -487,8 +486,8 @@ function RecitationScreen({ item, kind, onComplete, onQuit, color }) {
   const [transcriptPreview, setTranscriptPreview] = useState("");
 
   // Web/PWA short-circuit: recording requires native Android/iOS modules
-  // (PermissionsAndroid, expo-audio recorder hooks, whisper.rn + the Kotlin
-  // AAC→WAV bridge). On web we render a friendly "open in mobile" panel
+  // (expo-audio recorder hooks, whisper.rn + the Kotlin AAC→WAV bridge).
+  // On web we render a friendly "open in mobile" panel
   // and skip every effect below that would otherwise call into native APIs.
   // All hooks above MUST stay unconditional (rules-of-hooks); the early return
   // only affects what JSX renders.
@@ -541,24 +540,11 @@ function RecitationScreen({ item, kind, onComplete, onQuit, color }) {
     );
   }
 
-  // Explicitly request mic permission when entering the screen.
-  // expo-audio's recorder checks permission internally, but on Android 13+ the OS
-  // doesn't grant RECORD_AUDIO until the user taps Allow — we make that request
-  // explicit so the dialog shows up the moment they open a recitation screen.
   const requestMic = useCallback(async () => {
     try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: "Microphone access",
-          message: "Record yourself reciting prayers and trope so you can review your pronunciation.",
-          buttonPositive: "Allow",
-          buttonNegative: "Cancel",
-        }
-      );
-      const ok = granted === PermissionsAndroid.RESULTS.GRANTED;
-      setMicPermission(ok ? "granted" : "denied");
-      return ok;
+      const { granted } = await requestRecordingPermissionsAsync();
+      setMicPermission(granted ? "granted" : "denied");
+      return granted;
     } catch {
       setMicPermission("denied");
       return false;
@@ -567,17 +553,11 @@ function RecitationScreen({ item, kind, onComplete, onQuit, color }) {
 
   useEffect(() => {
     let cancelled = false;
-    // Check current permission state without prompting first
     (async () => {
       try {
-        const has = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        const { granted } = await getRecordingPermissionsAsync();
         if (cancelled) return;
-        if (has) {
-          setMicPermission("granted");
-        } else {
-          // Don't auto-prompt; show a "Grant access" CTA so the user controls when the dialog appears.
-          setMicPermission("not-asked");
-        }
+        setMicPermission(granted ? "granted" : "not-asked");
       } catch {
         if (!cancelled) setMicPermission("not-asked");
       }
@@ -1041,6 +1021,24 @@ function UnitDetailScreen({ unit, onStartLesson, onBack }) {
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={styles.prayerRowTitle}>{p.title}</Text>
                   <Text style={styles.prayerRowDesc}>{p.hebrewTitle} · {p.category}</Text>
+                </View>
+                <Text style={[styles.quickArrow, { color: unit.color }]}>→</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {unit.id === "torah-verse-recitation" && (
+          <View>
+            <Text style={styles.sectionLabel}>RECITE A TORAH VERSE</Text>
+            {TROPE_VERSES.map((v) => (
+              <TouchableOpacity key={v.id} style={[styles.prayerRow, { borderColor: unit.color + "44" }]}
+                onPress={() => onStartLesson({ kind: "recite-trope", item: v, color: unit.color, title: v.title, sub: v.ref })}
+                activeOpacity={0.85}>
+                <Text style={{ fontSize: 22 }}>📜</Text>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.prayerRowTitle}>{v.ref}</Text>
+                  <Text style={styles.prayerRowDesc}>{v.title}</Text>
                 </View>
                 <Text style={[styles.quickArrow, { color: unit.color }]}>→</Text>
               </TouchableOpacity>
